@@ -6,8 +6,10 @@ out/
 # IDE
 .vscode/
 .idea/
+.cache/
 *.user
 CMakeUserPresets.json
+compile_commands.json
 
 # macOS
 .DS_Store

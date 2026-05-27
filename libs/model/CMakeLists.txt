@@ -1,0 +1,3 @@
+add_library(streameye_model INTERFACE)
+target_include_directories(streameye_model INTERFACE include)
+target_compile_features(streameye_model INTERFACE cxx_std_17)

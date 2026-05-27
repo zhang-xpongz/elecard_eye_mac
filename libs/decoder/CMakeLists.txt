@@ -1,0 +1,3 @@
+add_library(streameye_decoder INTERFACE)
+target_include_directories(streameye_decoder INTERFACE include)
+target_compile_features(streameye_decoder INTERFACE cxx_std_17)

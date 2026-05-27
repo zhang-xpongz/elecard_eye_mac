@@ -408,6 +408,7 @@ add_subdirectory(app)
 
 ## 11. 后续扩展(MVP 之后的演进路径)
 
+
 设计层面 MVP 已经为以下扩展留好接口,**MVP 不实现**,但写代码时不能堵死这些路径:
 
 1. **H.265/AV1/VVC 支持** — 各自实现 `ISyntaxParser` 接口,`StreamSession` 按 codec 选择
@@ -419,7 +420,78 @@ add_subdirectory(app)
 
 ---
 
-## 12. 风险与未决项
+## 12. 开发实践 — DDD + TDD
+
+本项目在实施阶段必须遵循两条方法论硬约束。
+
+### 12.1 DDD(领域驱动设计)
+
+**Ubiquitous Language**:代码命名、文档、commit message 全部使用 H.264/H.265 规范术语。
+- ✅ `parseSliceHeader`, `ParameterSetStore`, `nal_unit_type`, `poc_lsb`
+- ❌ `parseHeader`, `ConfigCache`, `frameType`(脱离规范的自造词)
+
+**分层与依赖方向**(domain 永远在中心,infra/UI 围绕它):
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  Presentation     app/  (Qt 6)                             │
+└────────────────────────────────┬──────────────────────────┘
+                                 ▼
+┌───────────────────────────────────────────────────────────┐
+│  Application      StreamSession (aggregate root,协调用例)  │
+└────────────────────────────────┬──────────────────────────┘
+                                 ▼
+┌───────────────────────────────────────────────────────────┐
+│  Domain           libs/model + libs/parser                 │
+│                   纯 C++17,无 Qt/FFmpeg/OS 依赖              │
+│                   FrameRecord, SyntaxNode, NALUnit,         │
+│                   ParameterSetStore, H264SyntaxParser       │
+└───────────────────────────────────────────────────────────┘
+                                 ▲
+                                 │ ports (interfaces)
+                                 │
+┌────────────────────────────────┴──────────────────────────┐
+│  Infrastructure   libs/decoder (FFmpeg) + libs/io (mmap)   │
+└───────────────────────────────────────────────────────────┘
+```
+
+- **Aggregate Root**:`StreamSession`,所有 `FrameRecord` 必须通过它访问
+- **Entity**:`FrameRecord`(有 identity:`frame.index`)
+- **Value Object**:`SyntaxNode`、`NALUnit`、`DecodedFrame`(纯数据,无 identity)
+- **Domain Service**:`H264SyntaxParser`(把字节流变成 domain 对象的无状态服务)
+- **禁止泄漏**:FFmpeg 的 `AVFrame*` / `AVCodecContext*` **不允许出现在 domain 层签名里**;decoder 输出 `DecodedFrame`(纯 std 类型)再交付
+
+### 12.2 TDD(测试驱动开发)
+
+**铁律**:任何新功能、字段、bug 修复,**先写失败的测试,再写实现**。流程:
+
+```
+红 (failing test) ──▶ 绿 (minimal impl) ──▶ refactor ──▶ 提交
+```
+
+具体到本项目:
+
+| 场景 | TDD 落地方式 |
+|---|---|
+| Parser 新增字段(如 `level_idc`) | 在 `libs/parser/tests/h264_sps_test.cpp` 加一条:塞入手工 SPS 字节 → 断言 `node["level_idc"].value == "31"`。先看到红,再去 parser 加解析 |
+| NALSplitter 新增 corner case | 在 `libs/parser/tests/nal_splitter_test.cpp` 加 fixture(如双重 EP3)→ 断言切割结果。先红再绿 |
+| Bug 修复 | 先复现这个 bug 写一个测试,看到它红,再去修代码,绿后提交 |
+| GUI 新面板 | 用 QTest 写最小烟雾测试(创建面板 → 喂 mock model → 断言行数/可见性) |
+
+**禁止**:
+- ❌ 先写实现再补测试
+- ❌ "测试以后再写"
+- ❌ 提交时 ctest 跳过任何 test
+- ❌ 用 `DISABLED_` 前缀绕开 failing test(除非有 issue 链接说明)
+
+**CMake 集成**:
+- `enable_testing()` + `add_test()`,`ctest` 一键全测
+- Debug 构建默认开 ASan + UBSan,跑测试自动验内存安全
+- 推荐(MVP 后)CI 上要求 `ctest --output-on-failure` 必须全绿才能 merge
+
+---
+
+## 13. 风险与未决项
 
 | 风险 | 缓解 |
 |---|---|

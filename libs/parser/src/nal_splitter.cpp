@@ -3,7 +3,6 @@
 namespace parser {
 
 std::vector<NALUnit> NALSplitter::split(const uint8_t* data, size_t size) {
-    // TODO: implement to pass tests
     // 提示:
     //   1) 早返回:data==nullptr 或 size<3 → 返回空 vector
     //   2) 单次扫描,找所有 0x00 0x00 0x01 匹配位置
@@ -18,8 +17,23 @@ std::vector<NALUnit> NALSplitter::split(const uint8_t* data, size_t size) {
     //   5) nal_unit_type:
     //        - 有 payload(payload_offset < size)→ data[payload_offset] & 0x1F
     //        - 否则                              → 0
-    (void)data; (void)size;
-    return {};
+    if (data == nullptr || size < 3) return {};
+    std::vector<NALUnit> nals;
+    for (size_t i = 0; i < size - 2; i++){
+        if (data[i] == 0 && data[i+1] == 0 && data[i+2] == 1) {
+            NALUnit nal;
+            nal.byte_offset = (i > 0 && data[i-1] == 0) ? (i-1) : i;
+            nal.payload_offset = i + 3;
+            nals.push_back(nal);
+            i += 2;
+        }
+    }
+
+    for (size_t k = 0; k < nals.size(); k++) {
+        nals[k].size = (k + 1 < nals.size()) ? (nals[k+1].byte_offset - nals[k].payload_offset) : (size - nals[k].payload_offset);
+        nals[k].nal_unit_type = (nals[k].payload_offset < size) ? static_cast<uint8_t>(data[nals[k].payload_offset] & 0x1F) : 0;
+    }
+    return nals;
 }
 
 }  // namespace parser

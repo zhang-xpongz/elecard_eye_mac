@@ -12,8 +12,23 @@ std::vector<uint8_t> stripEmulationPrevention(const uint8_t* data, size_t size) 
     //       否则:
     //           push data[i],          i += 1
     //   - 注意:i+2 < size 是"data[i+2] 是合法下标"的判断(末尾的 00 00 03 也会被剥)
-    (void)data; (void)size;
-    return {};
+    if (data == nullptr || size == 0) return {};
+
+    std::vector<uint8_t> output;
+    output.reserve(size);
+    size_t i= 0;
+    while(i < size) {
+        if (i + 2 < size && data[i] == 0 && data[i+1] == 0 && data[i+2] == 0x03) {
+            output.push_back(0x00);
+            output.push_back(0x00);
+            i += 3;
+        }
+        else {
+            output.push_back(data[i]);
+            i += 1;
+        }
+    }
+    return output;
 }
 
 }  // namespace parser

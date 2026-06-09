@@ -48,8 +48,6 @@ SyntaxNode H264SyntaxParser::parseNAL(const uint8_t* nal_data, size_t size,
 
 SyntaxNode H264SyntaxParser::parseSPS(const uint8_t* nal_data, size_t size) {
     SyntaxNode root{"seq_parameter_set_rbsp", "", 0, 0, false, {}};
-
-    // TODO(B.4 green):用 BitReader 顺序解析 SPS 字段。
     //
     // 0) BitReader r(nal_data, size);
     //    r.readBits(8);                 // 跳过 1 字节 NAL header → cursor 到 bit 8
@@ -154,8 +152,6 @@ SyntaxNode H264SyntaxParser::parseSPS(const uint8_t* nal_data, size_t size) {
 
 SyntaxNode H264SyntaxParser::parsePPS(const uint8_t* nal_data, size_t size) {
     SyntaxNode root{"pic_parameter_set_rbsp", "", 0, 0, false, {}};
-
-    // TODO(B.5 green):用 BitReader 顺序解析 PPS 字段(§7.3.2.2)。
     // 复用 parseSPS 里的 addField helper;lambda 写法同前。
     //
     // 0) 防御:nal_data==nullptr || size<1 → return root;
@@ -190,9 +186,29 @@ SyntaxNode H264SyntaxParser::parsePPS(const uint8_t* nal_data, size_t size) {
     // 6) if (r.hasError()) root.incomplete = true;
     //
     // 其中 se 写作 [](BitReader& br){ return br.readSE(); };
-
-    (void)nal_data;
-    (void)size;
+    if (nal_data == nullptr || size < 1) return root;
+    BitReader r(nal_data, size);
+    r.readBits(8);
+    addField(root, "pic_parameter_set_id", r, [](BitReader &r){ return r.readUE(); });
+    addField(root, "seq_parameter_set_id", r, [](BitReader &r){ return r.readUE(); });
+    addField(root, "entropy_coding_mode_flag", r, [](BitReader &r){ return r.readBits(1); });
+    addField(root, "bottom_field_pic_order_in_frame_present_flag", r, [](BitReader &r){ return r.readBits(1); });
+    addField(root, "num_slice_groups_minus1", r, [](BitReader &r){ return r.readUE(); });
+    if (std::stoi(root.children.back().value) != 0) {
+        root.incomplete = true;
+        return root;
+    }
+    addField(root, "num_ref_idx_l0_default_active_minus1", r, [](BitReader &r){ return r.readUE(); });
+    addField(root, "num_ref_idx_l1_default_active_minus1", r, [](BitReader &r){ return r.readUE(); });
+    addField(root, "weighted_pred_flag", r, [](BitReader &r){ return r.readBits(1); });
+    addField(root, "weighted_bipred_idc", r, [](BitReader &r){ return r.readBits(2); });
+    addField(root, "pic_init_qp_minus26", r, [](BitReader &r){ return r.readSE(); });
+    addField(root, "pic_init_qs_minus26", r, [](BitReader &r){ return r.readSE(); });
+    addField(root, "chroma_qp_index_offset", r, [](BitReader &r){ return r.readSE(); });
+    addField(root, "deblocking_filter_control_present_flag", r, [](BitReader &r){ return r.readBits(1); });
+    addField(root, "constrained_intra_pred_flag", r, [](BitReader &r){ return r.readBits(1); });
+    addField(root, "redundant_pic_cnt_present_flag", r, [](BitReader &r){ return r.readBits(1); });
+    if (r.hasError()) root.incomplete = true;
     return root;
 }
 

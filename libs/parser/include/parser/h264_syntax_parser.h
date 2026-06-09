@@ -1,27 +1,37 @@
 #pragma once
 
 #include "parser/i_syntax_parser.h"
+#include "parser/parameter_set_store.h"
 
 namespace parser {
 
 // =============================================================================
-// H264SyntaxParser — H.264 NAL 语法解析器(MVP:仅 SPS)
+// H264SyntaxParser — H.264 NAL 语法解析器(MVP:SPS / PPS / Slice Header)
 // =============================================================================
 //
 // 实现 ISyntaxParser。Phase B 逐步补齐:
 //   B.4 parseSPS         ✓
-//   B.5 parsePPS         ← 本任务
-//   B.6 parseSliceHeader (需配合 ParameterSetStore 查 SPS/PPS)
+//   B.5 parsePPS         ✓
+//   B.6 parseSliceHeader ← 本任务(需配合 ParameterSetStore 查 SPS/PPS)
 //
 // 语义遵循 H.264 (ITU-T H.264) §7.3。MVP 只解最小够用字段集,复杂可选项
 // (完整 VUI、scaling list、FMO ...)暂不解析,用注释标注 future work。
 //
 class H264SyntaxParser : public ISyntaxParser {
 public:
-    // 见 ISyntaxParser::parseNAL。按 nal_unit_type 分派到对应 parseXxx。
-    // 当前仅 type==7(SPS)有实现,其余返回空根节点。
+    // 见 ISyntaxParser::parseNAL。按 nal_unit_type 分派:
+    //   7→parseSPS,8→parsePPS,1/5→parseSliceHeader,其余返回空根节点。
     SyntaxNode parseNAL(const uint8_t* nal_data, size_t size,
                         uint8_t nal_unit_type) override;
+
+    // -------------------------------------------------------------------------
+    // setParameterSets — 注入 SPS/PPS 仓储,供 slice header 解析回查上下文
+    //
+    // slice header 的 frame_num / pic_order_cnt_lsb 位宽取自所引用 SPS,故解析
+    // slice 前必须先 set。传入指针由调用方持有,本类只读、不拥有,生命周期须覆盖
+    // 后续所有 parseSliceHeader 调用。未注入(nullptr)时 slice 解析只能解出
+    // pic_parameter_set_id 之前的字段,然后置 incomplete 返回。
+    void setParameterSets(const ParameterSetStore* store) { psets_ = store; }
 
 private:
     // -------------------------------------------------------------------------
@@ -81,6 +91,40 @@ private:
     //
     // 错误处理:同 parseSPS,出错置根节点 incomplete,不抛异常。
     SyntaxNode parsePPS(const uint8_t* nal_data, size_t size);
+
+    // -------------------------------------------------------------------------
+    // parseSliceHeader — 解析 slice_header(H.264 §7.3.3)
+    //
+    // 输入:nal_data 含 NAL header 的 slice 字节(EP3 已剥),size 字节数,
+    //       nal_unit_type(1=非 IDR slice,5=IDR slice)。IdrPicFlag = (type==5)。
+    // 输出:根节点 name="slice_header",字段作扁平子节点,first_mb_in_slice 从
+    //       bit 8 起。
+    //
+    // 上下文依赖(关键):frame_num 位宽 = SPS.log2_max_frame_num_minus4 + 4;
+    //   pic_order_cnt_lsb 位宽 = SPS.log2_max_pic_order_cnt_lsb_minus4 + 4。
+    //   通过 pic_parameter_set_id → PPS → seq_parameter_set_id → SPS 这条链,
+    //   从注入的 ParameterSetStore 回查。查不到(未 setParameterSets 或 store 里
+    //   没有对应 id)时,置根节点 incomplete 并返回已解出的前缀字段。
+    //
+    // MVP 字段集(按 §7.3.3 顺序,条件字段按 if 分支决定是否出现):
+    //   first_mb_in_slice, slice_type(value 带可读后缀如 "7 (I)"),
+    //   pic_parameter_set_id, frame_num(u(v)),
+    //   [!frame_mbs_only_flag] field_pic_flag [+ bottom_field_flag],
+    //   [IdrPicFlag] idr_pic_id,
+    //   [pic_order_cnt_type==0] pic_order_cnt_lsb(u(v))。
+    //
+    // NOT PARSED(MVP 边界,解到 pic_order_cnt_lsb 即停):
+    //   delta_pic_order_cnt_bottom、ref_pic_list_modification、pred_weight_table、
+    //   dec_ref_pic_marking、slice_qp_delta、disable_deblocking_filter_idc 等。
+    //   这些需要先解上面若干复杂可变长结构,留待 MVP 之后迭代。
+    //
+    // slice_type 取值(§7.4.3):0/5=P,1/6=B,2/7=I,3/8=SP,4/9=SI。
+    //   value 串格式 "<raw> (<letter>)",letter 由 raw % 5 决定。
+    SyntaxNode parseSliceHeader(const uint8_t* nal_data, size_t size,
+                                uint8_t nal_unit_type);
+
+    // SPS/PPS 仓储,只读不拥有(见 setParameterSets)。
+    const ParameterSetStore* psets_ = nullptr;
 };
 
 }  // namespace parser

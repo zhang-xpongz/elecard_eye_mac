@@ -1,5 +1,6 @@
 #include "parser/h264_syntax_parser.h"
 
+#include <climits>
 #include <string>
 
 #include "parser/bit_reader.h"
@@ -36,13 +37,37 @@ void addField(SyntaxNode& parent, const char* name, BitReader& r, ReadFn read_fn
     }
 }
 
+// 深度优先在已解析的 SPS/PPS 树里按 name 取整数字段;缺省返回 fallback。
+[[maybe_unused]] int findIntField(const SyntaxNode& root, const char* name,
+                                  int fallback) {
+    if (root.name == name) return std::stoi(root.value);
+    for (const auto& c : root.children) {
+        const int v = findIntField(c, name, INT_MIN);
+        if (v != INT_MIN) return v;
+    }
+    return fallback;
+}
+
+// slice_type 数值 → 可读字母(§7.4.3,5..9 表示"整图同型")。
+[[maybe_unused]] const char* sliceTypeLetter(int slice_type) {
+    switch (slice_type % 5) {
+        case 0: return "P";
+        case 1: return "B";
+        case 2: return "I";
+        case 3: return "SP";
+        case 4: return "SI";
+        default: return "?";
+    }
+}
+
 }  // namespace
 
 SyntaxNode H264SyntaxParser::parseNAL(const uint8_t* nal_data, size_t size,
                                       uint8_t nal_unit_type) {
     if (nal_unit_type == 7) return parseSPS(nal_data, size);
     if (nal_unit_type == 8) return parsePPS(nal_data, size);
-    // SliceHeader(1,5) 留给 B.6
+    if (nal_unit_type == 1 || nal_unit_type == 5)
+        return parseSliceHeader(nal_data, size, nal_unit_type);
     return SyntaxNode{};
 }
 
@@ -209,6 +234,76 @@ SyntaxNode H264SyntaxParser::parsePPS(const uint8_t* nal_data, size_t size) {
     addField(root, "constrained_intra_pred_flag", r, [](BitReader &r){ return r.readBits(1); });
     addField(root, "redundant_pic_cnt_present_flag", r, [](BitReader &r){ return r.readBits(1); });
     if (r.hasError()) root.incomplete = true;
+    return root;
+}
+
+SyntaxNode H264SyntaxParser::parseSliceHeader(const uint8_t* nal_data, size_t size,
+                                              uint8_t nal_unit_type) {
+    SyntaxNode root{"slice_header", "", 0, 0, false, {}};
+
+    // TODO(B.6b green):解析 slice header(§7.3.3),解到 pic_order_cnt_lsb 即停。
+    // 复用 addField helper;另有两个 helper 可用:
+    //   findIntField(tree, "name", fallback)  从已解析 SPS/PPS 树取整数字段
+    //   sliceTypeLetter(st)                   slice_type 数值 → "I"/"P"/"B"...
+    //
+    // 0) 防御 + 跳 header:
+    //      if (nal_data == nullptr || size < 1) { root.incomplete = true; return root; }
+    //      BitReader r(nal_data, size);
+    //      r.readBits(8);
+    //
+    // 1) addField(root, "first_mb_in_slice", r, ue);
+    //
+    //    // slice_type 要带可读后缀,不能直接用 addField(它只写数字)。手写:
+    //    {
+    //        size_t start = r.bitOffset();
+    //        int st = static_cast<int>(r.readUE());
+    //        std::string val = std::to_string(st) + " (" + sliceTypeLetter(st) + ")";
+    //        root.children.push_back(SyntaxNode{
+    //            "slice_type", val, start, r.bitOffset() - start, false, {}});
+    //    }
+    //
+    //    addField(root, "pic_parameter_set_id", r, ue);
+    //    int pps_id = std::stoi(root.children.back().value);
+    //
+    // 2) 回查上下文(没有就优雅止损):
+    //      const SyntaxNode* pps = psets_ ? psets_->findPPS(pps_id) : nullptr;
+    //      const SyntaxNode* sps = nullptr;
+    //      if (pps) {
+    //          int sps_id = findIntField(*pps, "seq_parameter_set_id", -1);
+    //          sps = psets_->findSPS(sps_id);
+    //      }
+    //      if (sps == nullptr) { root.incomplete = true; return root; }
+    //
+    //      int log2_fn   = findIntField(*sps, "log2_max_frame_num_minus4", 0);
+    //      int fmo_only  = findIntField(*sps, "frame_mbs_only_flag", 1);
+    //      int poc_type  = findIntField(*sps, "pic_order_cnt_type", 0);
+    //      int log2_poc  = findIntField(*sps, "log2_max_pic_order_cnt_lsb_minus4", 0);
+    //
+    // 3) frame_num 是 u(v),v = log2_fn + 4。捕获 v 的 lambda:
+    //      int fn_bits = log2_fn + 4;
+    //      addField(root, "frame_num", r, [fn_bits](BitReader& br){ return br.readBits(fn_bits); });
+    //
+    //      if (fmo_only == 0) {
+    //          addField(root, "field_pic_flag", r, u(1));
+    //          if (std::stoi(root.children.back().value) != 0)
+    //              addField(root, "bottom_field_flag", r, u(1));
+    //      }
+    //
+    // 4) if (nal_unit_type == 5)        // IdrPicFlag
+    //        addField(root, "idr_pic_id", r, ue);
+    //
+    // 5) if (poc_type == 0) {
+    //        int poc_bits = log2_poc + 4;
+    //        addField(root, "pic_order_cnt_lsb", r, [poc_bits](BitReader& br){ return br.readBits(poc_bits); });
+    //        // delta_pic_order_cnt_bottom 等属 MVP 外,不解。
+    //    }
+    //
+    // 6) if (r.hasError()) root.incomplete = true;
+    //    return root;
+
+    (void)nal_data;
+    (void)size;
+    (void)nal_unit_type;
     return root;
 }
 

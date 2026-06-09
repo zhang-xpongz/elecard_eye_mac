@@ -16,6 +16,7 @@ if(BUILD_TESTING)
     tests/h264_sps_test.cpp
     tests/h264_pps_test.cpp
     tests/parameter_set_store_test.cpp
+    tests/h264_slice_header_test.cpp
   )
   target_link_libraries(parser_tests PRIVATE
     streameye_parser

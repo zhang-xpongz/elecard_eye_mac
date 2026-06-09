@@ -301,9 +301,45 @@ SyntaxNode H264SyntaxParser::parseSliceHeader(const uint8_t* nal_data, size_t si
     // 6) if (r.hasError()) root.incomplete = true;
     //    return root;
 
-    (void)nal_data;
-    (void)size;
-    (void)nal_unit_type;
+    if (nal_data == nullptr || size < 1) return root;
+    BitReader r(nal_data, size);
+    r.readBits(8);
+    addField(root, "first_mb_in_slice", r, [](BitReader &r){ return r.readUE(); });
+    size_t start = r.bitOffset();
+    int st = static_cast<int>(r.readUE());
+    std::string val = std::to_string(st) + " (" + sliceTypeLetter(st) + ")";
+    root.children.push_back(SyntaxNode{
+        "slice_type", val, start, r.bitOffset() - start, false, {}});
+    addField(root, "pic_parameter_set_id", r, [](BitReader &r){ return r.readUE(); });
+    int pps_id = std::stoi(root.children.back().value);
+    const SyntaxNode* pps = psets_ ? psets_->findPPS(pps_id) : nullptr;
+    const SyntaxNode* sps = nullptr;
+    if (pps) {
+        int sps_id = findIntField(*pps, "seq_parameter_set_id", -1);
+        sps = psets_->findSPS(sps_id);
+    }
+    if (sps == nullptr) {
+        root.incomplete = true;
+        return root;
+    }
+    int log2_fn = findIntField(*sps, "log2_max_frame_num_minus4", 0);
+    int fmo_only = findIntField(*sps, "frame_mbs_only_flag", 1);
+    int poc_type = findIntField(*sps, "pic_order_cnt_type", 0);
+    int log2_poc = findIntField(*sps, "log2_max_pic_order_cnt_lsb_minus4", 0);
+    int fn_bits = log2_fn + 4;
+    addField(root, "frame_num", r, [fn_bits](BitReader &r){ return r.readBits(fn_bits); });
+    if (fmo_only == 0) {
+        addField(root, "field_pic_flag", r, [](BitReader &r){ return r.readBits(1); });
+        if (std::stoi(root.children.back().value) != 0)
+            addField(root, "bottom_field_flag", r, [](BitReader &r){ return r.readBits(1); });
+    }
+    if (nal_unit_type == 5)
+        addField(root, "idr_pic_id", r, [](BitReader &r){ return r.readUE(); });
+    if (poc_type == 0) {
+        int poc_bits = log2_poc + 4;
+        addField(root, "pic_order_cnt_lsb", r, [poc_bits](BitReader &r){ return r.readBits(poc_bits); });
+    }
+    if (r.hasError()) root.incomplete = true;
     return root;
 }
 

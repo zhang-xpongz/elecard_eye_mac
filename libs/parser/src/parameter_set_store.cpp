@@ -2,7 +2,6 @@
 
 namespace parser {
 
-// TODO(B.6a green):实现以下 5 个方法,使 parameter_set_store_test 全绿。
 //
 // addSPS(id, tree):   sps_[id] = std::move(tree);
 // addPPS(id, tree):   pps_[id] = std::move(tree);

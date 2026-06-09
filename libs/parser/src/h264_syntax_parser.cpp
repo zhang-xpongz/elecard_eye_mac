@@ -103,8 +103,51 @@ SyntaxNode H264SyntaxParser::parseSPS(const uint8_t* nal_data, size_t size) {
     // 其中 u(n) 写作 [](BitReader& br){ return br.readBits(n); };
     //       ue    写作 [](BitReader& br){ return br.readUE(); };
 
-    (void)nal_data;
-    (void)size;
+    if (nal_data == nullptr || size < 1) return root;
+    BitReader r(nal_data, size);
+    r.readBits(8);
+    addField(root, "profile_idc", r, [](BitReader& br){ return br.readBits(8); });
+    int profile = std::stoi(root.children.back().value);
+    addField(root, "constraint_set_flags", r, [](BitReader& br){ return br.readBits(8); });
+    addField(root, "level_idc", r, [](BitReader& br){ return br.readBits(8); });
+    addField(root, "seq_parameter_set_id", r, [](BitReader& br){ return br.readUE(); });
+    if (isHighProfile(profile)) {
+        addField(root, "chroma_format_idc", r, [](BitReader& br){ return br.readUE(); });
+        addField(root, "bit_depth_luma_minus8", r, [](BitReader& br){ return br.readUE(); });
+        addField(root, "bit_depth_chroma_minus8", r, [](BitReader& br){ return br.readUE(); });
+        addField(root, "qpprime_y_zero_transform_bypass_flag", r, [](BitReader& br){ return br.readBits(1); });
+        addField(root, "seq_scaling_matrix_present_flag", r, [](BitReader& br){ return br.readBits(1); });
+        if (std::stoi(root.children.back().value) != 0) {
+            root.incomplete = true;
+            return root;
+        }
+    }
+    addField(root, "log2_max_frame_num_minus4", r, [](BitReader& br){ return br.readUE(); });
+    addField(root, "pic_order_cnt_type", r, [](BitReader& br){ return br.readUE(); });
+    int poc_type = std::stoi(root.children.back().value);
+    if (poc_type == 0) {
+        addField(root, "log2_max_pic_order_cnt_lsb_minus4", r, [](BitReader& br){ return br.readUE(); });
+    }
+    addField(root, "max_num_ref_frames", r, [](BitReader& br){ return br.readUE(); });
+    addField(root, "gaps_in_frame_num_value_allowed_flag", r, [](BitReader& br){ return br.readBits(1); });
+    addField(root, "pic_width_in_mbs_minus1", r, [](BitReader& br){ return br.readUE(); });
+    addField(root, "pic_height_in_map_units_minus1", r, [](BitReader& br){ return br.readUE(); });
+    addField(root, "frame_mbs_only_flag", r, [](BitReader& br){ return br.readBits(1); });
+    int fmo = std::stoi(root.children.back().value);
+    if (fmo == 0) {
+        addField(root, "mb_adaptive_frame_field_flag", r, [](BitReader& br){ return br.readBits(1); });
+    }
+    addField(root, "direct_8x8_inference_flag", r, [](BitReader& br){ return br.readBits(1); });
+    addField(root, "frame_cropping_flag", r, [](BitReader& br){ return br.readBits(1); });
+    int crop = std::stoi(root.children.back().value);
+    if (crop) {
+        addField(root, "frame_crop_left_offset", r, [](BitReader& br){ return br.readUE(); });
+        addField(root, "frame_crop_right_offset", r, [](BitReader& br){ return br.readUE(); });
+        addField(root, "frame_crop_top_offset", r, [](BitReader& br){ return br.readUE(); });
+        addField(root, "frame_crop_bottom_offset", r, [](BitReader& br){ return br.readUE(); });
+    }
+    addField(root, "vui_parameters_present_flag", r, [](BitReader& br){ return br.readBits(1); });
+    if (r.hasError()) root.incomplete = true;
     return root;
 }
 

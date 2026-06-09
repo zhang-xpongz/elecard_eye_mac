@@ -13,6 +13,7 @@ if(BUILD_TESTING)
     tests/nal_splitter_test.cpp
     tests/ep3_strip_test.cpp
     tests/h264_sps_test.cpp
+    tests/h264_pps_test.cpp
   )
   target_link_libraries(parser_tests PRIVATE
     streameye_parser

@@ -41,7 +41,8 @@ void addField(SyntaxNode& parent, const char* name, BitReader& r, ReadFn read_fn
 SyntaxNode H264SyntaxParser::parseNAL(const uint8_t* nal_data, size_t size,
                                       uint8_t nal_unit_type) {
     if (nal_unit_type == 7) return parseSPS(nal_data, size);
-    // PPS(8)/SliceHeader(1,5) 留给 B.5 / B.6
+    if (nal_unit_type == 8) return parsePPS(nal_data, size);
+    // SliceHeader(1,5) 留给 B.6
     return SyntaxNode{};
 }
 
@@ -148,6 +149,50 @@ SyntaxNode H264SyntaxParser::parseSPS(const uint8_t* nal_data, size_t size) {
     }
     addField(root, "vui_parameters_present_flag", r, [](BitReader& br){ return br.readBits(1); });
     if (r.hasError()) root.incomplete = true;
+    return root;
+}
+
+SyntaxNode H264SyntaxParser::parsePPS(const uint8_t* nal_data, size_t size) {
+    SyntaxNode root{"pic_parameter_set_rbsp", "", 0, 0, false, {}};
+
+    // TODO(B.5 green):用 BitReader 顺序解析 PPS 字段(§7.3.2.2)。
+    // 复用 parseSPS 里的 addField helper;lambda 写法同前。
+    //
+    // 0) 防御:nal_data==nullptr || size<1 → return root;
+    //    BitReader r(nal_data, size);
+    //    r.readBits(8);                 // 跳过 NAL header → 第一个字段从 bit 8
+    //
+    // 1) addField(root, "pic_parameter_set_id", r, ue);
+    //    addField(root, "seq_parameter_set_id", r, ue);
+    //    addField(root, "entropy_coding_mode_flag", r, u(1));
+    //    addField(root, "bottom_field_pic_order_in_frame_present_flag", r, u(1));
+    //
+    // 2) addField(root, "num_slice_groups_minus1", r, ue);
+    //    if (num_slice_groups_minus1 != 0) {     // FMO,MVP 不解
+    //        root.incomplete = true; return root;
+    //    }
+    //
+    // 3) addField(root, "num_ref_idx_l0_default_active_minus1", r, ue);
+    //    addField(root, "num_ref_idx_l1_default_active_minus1", r, ue);
+    //    addField(root, "weighted_pred_flag",  r, u(1));
+    //    addField(root, "weighted_bipred_idc", r, u(2));        // 注意是 2 bit
+    //
+    // 4) 三个有符号字段(第一次用 readSE):
+    //    addField(root, "pic_init_qp_minus26",     r, se);      // 可能为负,如 -3
+    //    addField(root, "pic_init_qs_minus26",     r, se);
+    //    addField(root, "chroma_qp_index_offset",  r, se);      // 可能为负,如 -2
+    //
+    // 5) addField(root, "deblocking_filter_control_present_flag", r, u(1));
+    //    addField(root, "constrained_intra_pred_flag",            r, u(1));
+    //    addField(root, "redundant_pic_cnt_present_flag",         r, u(1));
+    //    // 到此为止。后面可能还有 PPS 扩展(more_rbsp_data),MVP 不解。
+    //
+    // 6) if (r.hasError()) root.incomplete = true;
+    //
+    // 其中 se 写作 [](BitReader& br){ return br.readSE(); };
+
+    (void)nal_data;
+    (void)size;
     return root;
 }
 

@@ -9,8 +9,8 @@ namespace parser {
 // =============================================================================
 //
 // 实现 ISyntaxParser。Phase B 逐步补齐:
-//   B.4 parseSPS         ← 本任务
-//   B.5 parsePPS
+//   B.4 parseSPS         ✓
+//   B.5 parsePPS         ← 本任务
 //   B.6 parseSliceHeader (需配合 ParameterSetStore 查 SPS/PPS)
 //
 // 语义遵循 H.264 (ITU-T H.264) §7.3。MVP 只解最小够用字段集,复杂可选项
@@ -56,6 +56,31 @@ private:
     // 错误处理:任一字段读取使 BitReader.hasError()==true 时,把根节点
     // incomplete 置 true 并停止,不抛异常。
     SyntaxNode parseSPS(const uint8_t* nal_data, size_t size);
+
+    // -------------------------------------------------------------------------
+    // parsePPS — 解析 pic_parameter_set_rbsp(H.264 §7.3.2.2)
+    //
+    // 输入 / 输出约定同 parseSPS:含 NAL header(EP3 已剥),根节点
+    // name="pic_parameter_set_rbsp",字段作扁平子节点,pic_parameter_set_id
+    // 从 bit 8 起。
+    //
+    // MVP 字段集:
+    //   pic_parameter_set_id, seq_parameter_set_id, entropy_coding_mode_flag,
+    //   bottom_field_pic_order_in_frame_present_flag, num_slice_groups_minus1,
+    //   num_ref_idx_l0_default_active_minus1, num_ref_idx_l1_default_active_minus1,
+    //   weighted_pred_flag, weighted_bipred_idc(u(2)),
+    //   pic_init_qp_minus26(se), pic_init_qs_minus26(se),
+    //   chroma_qp_index_offset(se), deblocking_filter_control_present_flag,
+    //   constrained_intra_pred_flag, redundant_pic_cnt_present_flag。
+    //
+    // NOT PARSED(MVP 外):
+    //   num_slice_groups_minus1>0 的 FMO slice group map(遇到则置 incomplete);
+    //   redundant_pic_cnt_present_flag 之后的 PPS 扩展(transform_8x8_mode_flag、
+    //   pic_scaling_matrix、second_chroma_qp_index_offset)—— High profile 流里
+    //   存在(more_rbsp_data),MVP 读到 redundant_pic_cnt_present_flag 即停。
+    //
+    // 错误处理:同 parseSPS,出错置根节点 incomplete,不抛异常。
+    SyntaxNode parsePPS(const uint8_t* nal_data, size_t size);
 };
 
 }  // namespace parser

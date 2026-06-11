@@ -41,7 +41,6 @@ bool StreamSession::open(const std::string& path) {
     frames_.clear();
     psets_.clear();
 
-    // TODO(C.2 green):实现下面 5 步。
     //
     // 1) 读整个文件到 es_(二进制):
     //      std::ifstream f(path, std::ios::binary | std::ios::ate);
@@ -113,10 +112,65 @@ bool StreamSession::open(const std::string& path) {
     // 5) return true;
     //
     // 提示:helper findInt / spsForSlice 已在本文件 anon namespace 给好,直接用。
-    (void)path;
-    (void)spsForSlice;
-    (void)findInt;
-    return false;
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) return false;
+    const std::streamsize n = f.tellg();
+    if (n <= 0) return false;
+    es_.resize(static_cast<size_t>(n));
+    f.seekg(0);
+    f.read(reinterpret_cast<char*>(es_.data()), n);
+    parser::NALSplitter splitter;
+    auto nals = splitter.split(es_.data(), es_.size());
+    parser::H264SyntaxParser parser;
+    parser.setParameterSets(&psets_);
+    std::optional<POCCalculator> poc;
+    
+    for (size_t i = 0; i < nals.size(); ++i) {
+        const auto& nal = nals[i];
+        const uint8_t* p = es_.data() + nal.payload_offset;
+        auto rbsp = parser::stripEmulationPrevention(p, nal.size);
+        auto tree = parser.parseNAL(rbsp.data(), rbsp.size(), nal.nal_unit_type);
+        if (nal.nal_unit_type == 7) {
+            psets_.addSPS(findInt(tree, "seq_parameter_set_id", 0), tree);
+        }
+        else if (nal.nal_unit_type == 8) {
+            psets_.addPPS(findInt(tree, "pic_parameter_set_id", 0), tree);
+        }
+        else if (nal.nal_unit_type == 1 || nal.nal_unit_type == 5) {
+            int first_mb = findInt(tree, "first_mb_in_slice", 0);
+            if (first_mb != 0) {
+                frames_.back().nals.push_back(nal);
+                frames_.back().byte_size += nal.size;
+                continue;
+                }
+            FrameRecord fr;
+            fr.index = static_cast<int>(frames_.size());
+            int st_raw = findInt(tree, "slice_type", 2);
+            fr.type = static_cast<SliceType>(st_raw % 5);
+            bool is_idr = (nal.nal_unit_type == 5);
+            const parser::SyntaxNode* sps = spsForSlice(psets_, tree);
+            int poc_type = sps ? findInt(*sps, "pic_order_cnt_type", 0) : 0;
+            if (sps && poc_type == 0) {
+                if (!poc) {
+                    int log2 = findInt(*sps, "log2_max_pic_order_cnt_lsb_minus4", 0) + 4;
+                    poc.emplace(log2);
+                }
+                int lsb = findInt(tree, "pic_order_cnt_lsb", 0);
+                fr.poc = poc->compute(is_idr, lsb);
+            }
+            else {
+                fr.poc = 0;
+            }
+            fr.byte_offset_in_es = nal.byte_offset;
+            fr.byte_size = (nal.payload_offset - nal.byte_offset) + nal.size;
+            fr.nals.push_back(nal);
+            fr.syntax_tree = tree;
+            fr.missing_paramset = (sps == nullptr) || tree.incomplete;
+            frames_.push_back(std::move(fr));
+        }
+        if (progress_) progress_(static_cast<int>((i + 1) * 100 / nals.size()));
+    }
+    return true;
 }
 
 }  // namespace model
